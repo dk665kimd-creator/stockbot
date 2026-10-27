@@ -92,7 +92,42 @@ def fetch_target(code: str) -> dict:
     }
 
 
+LABELS = ["매출액", "영업이익", "당기순이익"]
+
+
+def fetch_earnings_api(code: str):
+    """네이버 모바일 증권 API의 분기 실적(컨센서스 추정치 = isConsensus 'Y')."""
+    d = get_json(f"https://m.stock.naver.com/api/stock/{code}/finance/quarter")
+    fi = d.get("financeInfo") or {}
+    titles = fi.get("trTitleList") or []
+    est = [t for t in titles if str(t.get("isConsensus")).upper() == "Y"][:2]
+    rows = {r.get("title"): (r.get("columns") or {}) for r in fi.get("rowList") or []}
+    periods = [t.get("title", t.get("key")) + "(E)" for t in est]
+    data = {}
+    for label in LABELS:
+        cols = rows.get(label)
+        if cols is None:
+            continue
+        data[label] = {
+            t.get("title", t.get("key")) + "(E)": (cols.get(t.get("key")) or {}).get("value")
+            for t in est
+        }
+    return data, periods
+
+
 def fetch_earnings(code: str):
+    """API 우선, 실패하거나 비어 있으면 HTML 표로 대체."""
+    try:
+        data, periods = fetch_earnings_api(code)
+        if data and periods and any(v for row in data.values() for v in row.values()):
+            return data, periods
+        log.warning("실적 API 결과 비어 있음: %s", code)
+    except Exception as e:
+        log.warning("실적 API 실패(%s): %s", code, e)
+    return fetch_earnings_html(code)
+
+
+def fetch_earnings_html(code: str):
     """네이버 증권 '기업실적분석' 표에서 연간/분기 실적(추정치 E 포함)."""
     html = get_html("https://finance.naver.com/item/main.naver", code=code)
     tables = pd.read_html(StringIO(html), match="매출액")
@@ -207,6 +242,7 @@ def build_message(code: str, name: str) -> str:
             lines.append("\n📊 실적 추정치 없음")
     except Exception as e:
         log.warning("실적 조회 실패: %s", e)
+        lines.append("\n📊 실적 추정치를 가져오지 못했어요 (로그 확인 필요)")
 
     try:
         reports = fetch_reports(code)
