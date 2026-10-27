@@ -97,16 +97,29 @@ def fetch_earnings(code: str):
     html = get_html("https://finance.naver.com/item/main.naver", code=code)
     tables = pd.read_html(StringIO(html), match="매출액")
     df = tables[0]
-    df.columns = [c[-1] if isinstance(c, tuple) else c for c in df.columns]
     first = df.columns[0]
     df = df.set_index(first)
+
+    def group(c):  # 상위 헤더(최근 연간 실적 / 최근 분기 실적)
+        return str(c[-2]) if isinstance(c, tuple) and len(c) >= 2 else ""
+
+    def period(c):  # 기간 (예: 2026.12(E))
+        return str(c[-1] if isinstance(c, tuple) else c).strip()
+
+    est = [c for c in df.columns if "(E)" in period(c)]
+    # 분기 추정치 우선, 없으면 전체 추정치 중 가까운 것
+    quarterly = [c for c in est if "분기" in group(c)]
+    chosen = (quarterly or est)[:2]
+
     rows = {}
-    for label in ["매출액", "영업이익", "당기순이익", "EPS(원)", "PER(배)"]:
+    for label in ["매출액", "영업이익", "당기순이익"]:
         if label in df.index:
             rows[label] = df.loc[label]
-    # 추정치(E)가 들어간 컬럼만 추리기
-    est_cols = [c for c in df.columns if "(E)" in str(c)]
-    return {k: {c: v[c] for c in est_cols} for k, v in rows.items()}, est_cols
+    periods = [period(c) for c in chosen]
+    data = {
+        label: {period(c): s[c] for c in chosen} for label, s in rows.items()
+    }
+    return data, periods
 
 
 def fetch_reports(code: str, limit: int = 5):
@@ -182,14 +195,14 @@ def build_message(code: str, name: str) -> str:
     try:
         earn, cols = fetch_earnings(code)
         if earn and cols:
-            lines.append("\n📊 <b>실적 컨센서스(추정)</b>")
+            lines.append("\n📊 <b>분기 실적 컨센서스(추정)</b>")
+            names = {"매출액": "매출액", "영업이익": "영업이익", "당기순이익": "순이익"}
             for col in cols:
                 lines.append(f"[{esc(col)}]")
                 for label, vals in earn.items():
                     v = vals.get(col)
                     if v is not None and str(v) != "nan":
-                        unit = "억원" if label in ("매출액", "영업이익", "당기순이익") else ""
-                        lines.append(f"  {label}: {esc(v)}{unit}")
+                        lines.append(f"  {names[label]}: {esc(v)}억원")
         else:
             lines.append("\n📊 실적 추정치 없음")
     except Exception as e:
