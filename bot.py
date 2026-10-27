@@ -266,7 +266,6 @@ def main():
             port=port,
             url_path=token,
             webhook_url=f"{base_url.rstrip('/')}/{token}",
-            drop_pending_updates=True,
         )
     else:
         log.info("봇 시작 (폴링 모드)")
